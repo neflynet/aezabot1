@@ -306,8 +306,6 @@ async def pay_stars(callback: types.CallbackQuery):
 @dp.callback_query(F.data.startswith("pay_crypto_"))
 async def pay_crypto(callback: types.CallbackQuery):
     try:
-        logger.info(f"🔘 Crypto click: {callback.data} from {callback.from_user.id}")
-        
         if not crypto_client:
             await callback.answer("❌ Крипто не настроена", show_alert=True)
             return
@@ -339,8 +337,10 @@ async def pay_crypto(callback: types.CallbackQuery):
         
         text = f"{title}\nСумма: {amount} {asset}\nСтатус: {invoice.status}"
         
-        # ✅ ИСПРАВЛЕНИЕ: используем edit_message_text вместо edit_text
-        await callback.message.edit_message_text(
+        # ✅ ПРАВИЛЬНО: используем bot.edit_message_text
+        await bot.edit_message_text(
+            chat_id=callback.message.chat.id,
+            message_id=callback.message.message_id,
             text=text,
             reply_markup=kb.as_markup()
         )
@@ -349,16 +349,6 @@ async def pay_crypto(callback: types.CallbackQuery):
     except Exception as e:
         logger.error(f"❌ pay_crypto error: {e}", exc_info=True)
         await callback.answer("⚠️ Ошибка: " + str(e), show_alert=True)
-    
-    kb = InlineKeyboardBuilder()
-    kb.row(InlineKeyboardButton(text="💳 Оплатить через CryptoBot", url=invoice.bot_invoice_url))
-    kb.row(InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_crypto_{invoice.invoice_id}"))
-    kb.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="buy_private"))
-    
-    await callback.message.edit_text(
-        f"{title}\nСумма: {amount} {crypto_type.upper()}\nСтатус: {invoice.status}",
-        reply_markup=kb.as_markup()
-    )
 
 @dp.callback_query(F.data.startswith("chk"))
 async def check_crypto_payment(callback: types.CallbackQuery):
@@ -366,7 +356,7 @@ async def check_crypto_payment(callback: types.CallbackQuery):
         await callback.answer("❌ Ошибка", show_alert=True)
         return
     
-    invoice_id = callback.data[3:]  # Убираем "chk"
+    invoice_id = callback.data[3:]
     
     try:
         invoices = await crypto_client.get_invoices(status="active")
@@ -391,25 +381,23 @@ async def check_crypto_payment(callback: types.CallbackQuery):
                 )
                 await db.commit()
             
-            try:
-                link = await bot.create_chat_invite_link(
-                    chat_id=PRIVATE_CHANNEL_ID,
-                    member_limit=1,
-                    name=f"pay_{user_id}"
-                )
-                photo = get_photo("success")
-                text = PAYMENT_SUCCESS + f"\n\n🔗 Ссылка для входа:\n{link.invite_link}"
-                
-                # ✅ Используем edit_message_text
-                await callback.message.edit_message_text(text=text)
-            except Exception as e:
-                logger.error(f"❌ Ошибка: {e}")
-                await callback.message.edit_message_text("✅ Оплата подтверждена! Напиши админу 💌")
+            link = await bot.create_chat_invite_link(
+                chat_id=PRIVATE_CHANNEL_ID,
+                member_limit=1,
+                name=f"pay_{user_id}"
+            )
+            
+            # ✅ Используем bot.edit_message_text
+            await bot.edit_message_text(
+                chat_id=callback.message.chat.id,
+                message_id=callback.message.message_id,
+                text=PAYMENT_SUCCESS + f"\n\n🔗 Ссылка:\n{link.invite_link}"
+            )
         else:
-            await callback.answer("⏳ Оплата ещё не поступила", show_alert=True)
+            await callback.answer("⏳ Ждём оплату...", show_alert=True)
     except Exception as e:
-        logger.error(f"❌ Ошибка проверки: {e}")
-        await callback.answer("⚠️ Ошибка проверки", show_alert=True)
+        logger.error(f"❌ check_crypto error: {e}")
+        await callback.answer("⚠️ Ошибка", show_alert=True)
 
 @dp.pre_checkout_query()
 async def pre_checkout(query: types.PreCheckoutQuery):
