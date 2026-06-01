@@ -305,30 +305,50 @@ async def pay_stars(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data.startswith("pay_crypto_"))
 async def pay_crypto(callback: types.CallbackQuery):
-    if not crypto_client:
-        await callback.answer("❌ Крипто не настроена", show_alert=True)
-        return
-    
-    crypto_type = callback.data.split("_")[-1]  # usdt или ton
-    user = await get_user(callback.from_user.id)
-    stars_price = calc_price(PRIVATE_PRICE_STARS, user["discount"] if user else 0.0)
-    
-    # Конвертация: 1⭐ ≈ 0.02 USDT или 0.01 TON
-    if crypto_type == "usdt":
-        amount = round(stars_price * 0.02, 2)
-        asset = "USDT"  # ✅ ИСПРАВЛЕНО: строка вместо Asset.USDT
-        title = "💰 Оплата USDT"
-    else:  # ton
-        amount = round(stars_price * 0.01, 2)
-        asset = "TON"  # ✅ ИСПРАВЛЕНО: строка вместо Asset.TON
-        title = "💎 Оплата TON"
-    
-    invoice = await crypto_client.create_invoice(
-        asset=asset,  # ✅ Передаём строку
-        amount=amount,
-        description="Доступ в приват на 30 дней",
-        payload=f"user_{callback.from_user.id}_{crypto_type}"
-    )
+    try:
+        logger.info(f"🔘 Crypto click: {callback.data} from {callback.from_user.id}")
+        
+        if not crypto_client:
+            await callback.answer("❌ Крипто не настроена", show_alert=True)
+            return
+        
+        crypto_type = callback.data.split("_")[-1]
+        user = await get_user(callback.from_user.id)
+        stars_price = calc_price(PRIVATE_PRICE_STARS, user["discount"] if user else 0.0)
+        
+        if crypto_type == "usdt":
+            amount = round(stars_price * 0.02, 2)
+            asset = "USDT"
+            title = "💰 Оплата USDT"
+        else:
+            amount = round(stars_price * 0.01, 2)
+            asset = "TON"
+            title = "💎 Оплата TON"
+        
+        invoice = await crypto_client.create_invoice(
+            asset=asset,
+            amount=amount,
+            description="Privat 30 days",
+            payload=f"u{callback.from_user.id}"
+        )
+        
+        kb = InlineKeyboardBuilder()
+        kb.row(InlineKeyboardButton(text="💳 Оплатить", url=invoice.bot_invoice_url))
+        kb.row(InlineKeyboardButton(text="🔄 Проверить", callback_data=f"chk{invoice.invoice_id}"))
+        kb.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="buy_private"))
+        
+        text = f"{title}\nСумма: {amount} {asset}\nСтатус: {invoice.status}"
+        
+        # ✅ ИСПРАВЛЕНИЕ: используем edit_message_text вместо edit_text
+        await callback.message.edit_message_text(
+            text=text,
+            reply_markup=kb.as_markup()
+        )
+        await callback.answer()
+        
+    except Exception as e:
+        logger.error(f"❌ pay_crypto error: {e}", exc_info=True)
+        await callback.answer("⚠️ Ошибка: " + str(e), show_alert=True)
     
     kb = InlineKeyboardBuilder()
     kb.row(InlineKeyboardButton(text="💳 Оплатить через CryptoBot", url=invoice.bot_invoice_url))
@@ -340,16 +360,15 @@ async def pay_crypto(callback: types.CallbackQuery):
         reply_markup=kb.as_markup()
     )
 
-@dp.callback_query(F.data.startswith("check_crypto_"))
+@dp.callback_query(F.data.startswith("chk"))
 async def check_crypto_payment(callback: types.CallbackQuery):
     if not crypto_client:
         await callback.answer("❌ Ошибка", show_alert=True)
         return
     
-    invoice_id = callback.data.split("_")[-1]
+    invoice_id = callback.data[3:]  # Убираем "chk"
     
     try:
-        # Получаем список инвойсов и ищем нужный
         invoices = await crypto_client.get_invoices(status="active")
         invoice = None
         for inv in invoices:
@@ -380,13 +399,12 @@ async def check_crypto_payment(callback: types.CallbackQuery):
                 )
                 photo = get_photo("success")
                 text = PAYMENT_SUCCESS + f"\n\n🔗 Ссылка для входа:\n{link.invite_link}"
-                if photo:
-                    await callback.message.answer_photo(photo=photo, caption=text)
-                else:
-                    await callback.message.edit_text(text)
+                
+                # ✅ Используем edit_message_text
+                await callback.message.edit_message_text(text=text)
             except Exception as e:
                 logger.error(f"❌ Ошибка: {e}")
-                await callback.message.edit_text("✅ Оплата подтверждена! Напиши админу для доступа 💌")
+                await callback.message.edit_message_text("✅ Оплата подтверждена! Напиши админу 💌")
         else:
             await callback.answer("⏳ Оплата ещё не поступила", show_alert=True)
     except Exception as e:
