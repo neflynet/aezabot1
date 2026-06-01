@@ -14,7 +14,6 @@ from aiogram.client.session.aiohttp import AiohttpSession
 from dotenv import load_dotenv
 import aiosqlite
 from aiocryptopay import AioCryptoPay, Networks
-from aiocryptopay.const import Asset
 
 # ================= НАСТРОЙКИ =================
 load_dotenv()
@@ -36,7 +35,7 @@ PHOTOS = {
     "progress": "photos/progress.jpg",
 }
 
-# Рефералка
+# Рефералка по скриншотам
 TIKTOK_COMMENT = "sonya_dasha_bot лучшие девочки"
 SCREENSHOTS_REQUIRED = 10
 REFERRAL_REWARDS = {
@@ -162,44 +161,70 @@ dp = Dispatcher()
 # ================= ТЕКСТЫ =================
 WELCOME_TEXT = """🔥 Привет, красавчик! 💋
 
-Ты попал в закрытый клуб Сони и Даши 🌹
+Ты попал в закрытый клуб двух самых горячих девчонок — Сони и Даши 🌹
 
-✨ Эксклюзивные фото
-🎬 Личные видео
-💬 Голосовые
-🎁 Розыгрыши
+Здесь нет скучных постов. Только:
+✨ Эксклюзивные фото, которых нет в открытом доступе
+🎬 Личные видео-приветы для своих
+💬 Голосовые, в которых мы шепчем только для тебя
+🎁 Розыгрыши и сюрпризы для самых активных
 
-👇 Выбирай:"""
+Мы не просто «модели». Мы — твои личные фантазии, которые стали реальностью 😏
 
-PRIVATE_TEXT = """💎 Приватный клуб
+👇 Выбирай, что хочешь прямо сейчас:"""
 
-🔥 Личные видео
-💋 Голосовые
-📸 Фото для своих
+PRIVATE_TEXT = """💎 Приватный клуб Сони и Даши
 
-💰 Цена: {price}⭐{discount_text}"""
+Здесь то, чего ты не увидишь нигде:
+🔥 Личные видео-приветы только для тебя
+💋 Голосовые, в которых мы шепчем твоё имя
+📸 Фото, которые мы делаем только для «своих»
+🎁 Сюрпризы и розыгрыши для подписчиков
 
-REFERRAL_INSTRUCTION = f"""🎁 Хочешь скидку?
+Это не просто контент. Это — наше внимание только к тебе 😏
 
-1. Открой ТикТок
-2. Оставь 10 комментов: «{TIKTOK_COMMENT}»
-3. Пришли скриншоты сюда
+💰 Цена для тебя: {price}⭐{discount_text}"""
 
-📊 Бонусы:
-• 5 друзей → -10%
-• 10 друзей → -20%
-• 30 друзей → личное сообщение 💋"""
+REFERRAL_INSTRUCTION = f"""🎁 Хочешь скидку на приват? Всё просто!
 
-REFERRAL_UNLOCKED = """🎉 Ты справился!
+📱 Шаг 1: Открой ТикТок
+✍️ Шаг 2: Оставь 10 комментариев под нашими видео:
+   «{TIKTOK_COMMENT}»
+📸 Шаг 3: Пришли скриншоты каждого комментария ПРЯМО В ЭТОТ БОТ
 
-🔗 Твоя ссылка:
+Как только мы увидим 10/10 скриншотов — ты получишь:
+🔗 Свою реферальную ссылку
+💰 Возможность приглашать друзей и получать скидки:
+
+📊 Твои бонусы:
+• 5 друзей по твоей ссылке → скидка 10% на приват
+• 10 друзей → скидка 20% на приват  
+• 30 друзей → мы напишем тебе ЛИЧНО 💋
+
+Просто будь активным — и всё получится 😘"""
+
+REFERRAL_UNLOCKED = """🎉 Поздравляю, ты справился! 💋
+
+Ты отправил 10 скриншотов — мы всё проверили и видим твоё старание 😏
+
+🔗 Твоя реферальная ссылка:
 `{link}`
 
-Скидывай друзьям и получай бонусы 📈"""
+Просто скидывай её друзьям. Когда они зайдут в бота по твоей ссылке — ты начнёшь получать бонусы:
 
-PAYMENT_SUCCESS = """💋 Оплата прошла! 🔥
+📈 Твои бонусы:
+• 5 приглашённых → скидка 10% на приват
+• 10 приглашённых → скидка 20% на приват
+• 30 приглашённых → мы напишем тебе ЛИЧНО 💋
 
-Ты в клубе. Заходи, там ждёт эксклюзив 😘"""
+Просто делись — и получай удовольствие 😘"""
+
+PAYMENT_SUCCESS = """💋 Оплата прошла, красавчик! 🔥
+
+Ты теперь в нашем приватном клубе.
+Заходи — там уже ждёт кое-что особенное только для тебя 😘
+
+✨ Не забывай заглядывать — мы часто добавляем новое"""
 
 # ================= ХЕНДЛЕРЫ =================
 
@@ -210,7 +235,7 @@ async def auto_approve(request: types.ChatJoinRequest):
             await bot.approve_chat_join_request(chat_id=request.chat.id, user_id=request.from_user.id)
             logger.info(f"✅ Заявка одобрена: {request.from_user.id}")
         except Exception as e:
-            logger.error(f"❌ Ошибка: {e}")
+            logger.error(f"❌ Ошибка одобрения: {e}")
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
@@ -223,25 +248,25 @@ async def cmd_start(message: types.Message):
     
     kb = InlineKeyboardBuilder()
     kb.row(InlineKeyboardButton(text="🔥 Мой канал", url="https://t.me/+pKvsVnMkruZhYjcy"))
-    kb.row(InlineKeyboardButton(text="💎 Приват", callback_data="buy_private"))
-    kb.row(InlineKeyboardButton(text="🎁 Скидка", callback_data="ref_start"))
+    kb.row(InlineKeyboardButton(text="💎 Приватный клуб", callback_data="buy_private"))
+    kb.row(InlineKeyboardButton(text="🎁 Получить скидку", callback_data="ref_start"))
     
     photo = get_photo("welcome")
     if photo:
-        await message.answer_photo(photo=photo, caption=WELCOME_TEXT, reply_markup=kb.as_markup())
+        await message.answer_photo(photo=photo, caption=WELCOME_TEXT, reply_markup=kb.as_markup(), disable_web_page_preview=True)
     else:
-        await message.answer(WELCOME_TEXT, reply_markup=kb.as_markup())
+        await message.answer(WELCOME_TEXT, reply_markup=kb.as_markup(), disable_web_page_preview=True)
 
 @dp.callback_query(F.data == "buy_private")
 async def buy_private(callback: types.CallbackQuery):
     user = await get_user(callback.from_user.id)
     if not user:
-        await callback.answer("❌ Ошибка", show_alert=True)
+        await callback.answer("❌ Ошибка пользователя", show_alert=True)
         return
     
     discount = user["discount"]
     final_price = calc_price(PRIVATE_PRICE_STARS, discount)
-    discount_text = f"\n🎁 Скидка: {int(discount*100)}%" if discount > 0 else ""
+    discount_text = f"\n🎁 Твоя персональная скидка: {int(discount*100)}%" if discount > 0 else ""
     
     text = PRIVATE_TEXT.format(price=final_price, discount_text=discount_text)
     
@@ -264,15 +289,17 @@ async def buy_private(callback: types.CallbackQuery):
 @dp.callback_query(F.data == "pay_stars")
 async def pay_stars(callback: types.CallbackQuery):
     user = await get_user(callback.from_user.id)
-    price = calc_price(PRIVATE_PRICE_STARS, user["discount"] if user else 0.0)
+    discount = user["discount"] if user else 0.0
+    price = calc_price(PRIVATE_PRICE_STARS, discount)
     
     await bot.send_invoice(
         chat_id=callback.from_user.id,
-        title="💎 Приват",
-        description="Доступ на 30 дней",
+        title="💎 Приватный клуб",
+        description="Личный контент от Сони и Даши на 30 дней",
         payload="private_access",
         currency="XTR",
-        prices=[LabeledPrice(label="Доступ", amount=price)]
+        prices=[LabeledPrice(label="Доступ к привату", amount=price)],
+        start_parameter="private_sub"
     )
     await callback.answer()
 
@@ -289,23 +316,23 @@ async def pay_crypto(callback: types.CallbackQuery):
     # Конвертация: 1⭐ ≈ 0.02 USDT или 0.01 TON
     if crypto_type == "usdt":
         amount = round(stars_price * 0.02, 2)
-        asset = Asset.USDT
+        asset = "USDT"  # ✅ ИСПРАВЛЕНО: строка вместо Asset.USDT
         title = "💰 Оплата USDT"
     else:  # ton
         amount = round(stars_price * 0.01, 2)
-        asset = Asset.TON
+        asset = "TON"  # ✅ ИСПРАВЛЕНО: строка вместо Asset.TON
         title = "💎 Оплата TON"
     
     invoice = await crypto_client.create_invoice(
-        asset=asset,
+        asset=asset,  # ✅ Передаём строку
         amount=amount,
         description="Доступ в приват на 30 дней",
         payload=f"user_{callback.from_user.id}_{crypto_type}"
     )
     
     kb = InlineKeyboardBuilder()
-    kb.row(InlineKeyboardButton(text="💳 Оплатить", url=invoice.bot_invoice_url))
-    kb.row(InlineKeyboardButton(text="🔄 Проверить", callback_data=f"check_crypto_{invoice.invoice_id}"))
+    kb.row(InlineKeyboardButton(text="💳 Оплатить через CryptoBot", url=invoice.bot_invoice_url))
+    kb.row(InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_crypto_{invoice.invoice_id}"))
     kb.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="buy_private"))
     
     await callback.message.edit_text(
@@ -408,8 +435,8 @@ async def go_start(callback: types.CallbackQuery):
     
     kb = InlineKeyboardBuilder()
     kb.row(InlineKeyboardButton(text="🔥 Мой канал", url="https://t.me/+pKvsVnMkruZhYjcy"))
-    kb.row(InlineKeyboardButton(text="💎 Приват", callback_data="buy_private"))
-    kb.row(InlineKeyboardButton(text="🎁 Скидка", callback_data="ref_start"))
+    kb.row(InlineKeyboardButton(text="💎 Приватный клуб", callback_data="buy_private"))
+    kb.row(InlineKeyboardButton(text="🎁 Получить скидку", callback_data="ref_start"))
     
     photo = get_photo("welcome")
     if photo:
@@ -433,19 +460,19 @@ async def ref_start(callback: types.CallbackQuery):
         text = REFERRAL_UNLOCKED.format(link=ref_link)
         
         kb = InlineKeyboardBuilder()
-        kb.row(InlineKeyboardButton(text="📋 Копировать", switch_inline_query=user['ref_code']))
+        kb.row(InlineKeyboardButton(text="📋 Скопировать", switch_inline_query=user['ref_code']))
         kb.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="start"))
         
         photo = get_photo("referral")
         if photo:
-            await callback.message.answer_photo(photo=photo, caption=text, reply_markup=kb.as_markup())
+            await callback.message.answer_photo(photo=photo, caption=text, reply_markup=kb.as_markup(), disable_web_page_preview=True)
         else:
-            await callback.message.edit_text(text, reply_markup=kb.as_markup())
+            await callback.message.edit_text(text, reply_markup=kb.as_markup(), disable_web_page_preview=True)
         return
     
     progress = min(screenshots / SCREENSHOTS_REQUIRED, 1.0)
     bar = "█" * int(progress * 10) + "░" * (10 - int(progress * 10))
-    text = f"{REFERRAL_INSTRUCTION}\n\n📊 Прогресс: [{bar}] {screenshots}/{SCREENSHOTS_REQUIRED}"
+    text = f"{REFERRAL_INSTRUCTION}\n\n📊 Твой прогресс:\n[{bar}] {screenshots}/{SCREENSHOTS_REQUIRED} скриншотов"
     
     kb = InlineKeyboardBuilder()
     kb.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="start"))
@@ -461,7 +488,7 @@ async def handle_screenshot(message: types.Message):
     user_id = message.from_user.id
     user = await get_user(user_id)
     if not user:
-        await message.answer("❌ Сначала /start")
+        await message.answer("❌ Сначала нажми /start, красавчик 😘")
         return
     
     await add_screenshot(user_id)
@@ -471,21 +498,27 @@ async def handle_screenshot(message: types.Message):
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute("UPDATE users SET screenshots_verified = screenshots_sent WHERE user_id = ?", (user_id,))
             await db.commit()
-        
+        try:
+            await bot.send_message(ADMIN_ID, f"🎯 Новый пользователь выполнил задание!\n👤 @{message.from_user.username} ({user_id})\n📸 Отправил {SCREENSHOTS_REQUIRED} скриншотов")
+        except:
+            pass
         my_bot = await bot.get_me()
         ref_link = f"https://t.me/{my_bot.username}?start={user['ref_code']}"
-        text = f"🎉 Всё проверила! 💋\n\nТвоя ссылка:\n`{ref_link}`"
-        
+        text = f"🎉 Я всё проверила, красавчик! 💋\n\nТы отправил 10/10 скриншотов — я вижу твоё старание 😏\n\n🔗 Твоя реферальная ссылка:\n`{ref_link}`\n\nПросто скидывай её друзьям. Когда они зайдут по твоей ссылке — ты начнёшь получать бонусы:\n• 5 друзей → скидка 10%\n• 10 друзей → скидка 20%\n• 30 друзей → я напишу тебе ЛИЧНО 💋\n\nПросто делись — и получай удовольствие 😘"
         photo = get_photo("success")
         if photo:
-            await message.answer_photo(photo=photo, caption=text)
+            await message.answer_photo(photo=photo, caption=text, disable_web_page_preview=True)
         else:
-            await message.answer(text)
+            await message.answer(text, disable_web_page_preview=True)
     else:
-        bar = "█" * int((screenshots/SCREENSHOTS_REQUIRED)*10) + "░" * (10 - int((screenshots/SCREENSHOTS_REQUIRED)*10))
-        rem = SCREENSHOTS_REQUIRED - screenshots
-        text = f"💋 Принято!\n\n📊 [{bar}] {screenshots}/{SCREENSHOTS_REQUIRED}\n\nОсталось {rem}!"
-        
+        progress = min(screenshots / SCREENSHOTS_REQUIRED, 1.0)
+        bar = "█" * int(progress * 10) + "░" * (10 - int(progress * 10))
+        remaining = SCREENSHOTS_REQUIRED - screenshots
+        text = f"💋 Скриншот принят, красавчик! 😘\n\n📊 Твой прогресс:\n[{bar}] {screenshots}/{SCREENSHOTS_REQUIRED}\n\n"
+        if remaining > 0:
+            text += f"Осталось всего {remaining} скриншот{'а' if remaining in [2,3,4] else 'ов'}!\nПродолжай в том же духе — и скоро получишь свою реферальную ссылку 🔥"
+        else:
+            text += "🎉 Ты справился! Мы проверим скриншоты и скоро напишем тебе 😘"
         photo = get_photo("progress")
         if photo:
             await message.answer_photo(photo=photo, caption=text)
@@ -497,18 +530,27 @@ async def admin_add_invite(message: types.Message):
     if message.from_user.id != ADMIN_ID:
         return
     try:
-        target_id = int(message.text.split()[1])
-        disc, inv = await add_referral_invite(target_id)
-        await message.answer(f"✅ {target_id}\n📊 {inv} друзей\n💰 Скидка: {int(disc*100)}%")
+        target = message.text.split()[1]
+        if target.startswith("@"):
+            await message.answer("❌ Укажи ID пользователя (число), а не @юзернейм")
+            return
+        target_id = int(target)
+        new_discount, invites = await add_referral_invite(target_id)
+        reward_text = REFERRAL_REWARDS.get(invites, {}).get("text", "🎁 Бонус обновлён")
+        await message.answer(f"✅ Добавлено приглашение для {target_id}\n📊 Всего приглашений: {invites}\n💰 Текущая скидка: {int(new_discount * 100)}%\n🎁 {reward_text}")
+        try:
+            await bot.send_message(target_id, f"🎉 Поздравляю! Ты получил бонус за приглашённого друга 😘\nТвоя скидка обновлена: {int(new_discount * 100)}%\n{reward_text if new_discount > 0 else ''}")
+        except:
+            pass
     except Exception as e:
-        await message.answer(f"❌ {e}")
+        await message.answer(f"❌ Ошибка: {e}\nИспользование: /add_invite 123456789")
 
 # ================= ЗАПУСК =================
 async def main():
     await init_db()
     if not PHOTOS["welcome"].startswith("http"):
         Path("photos").mkdir(exist_ok=True)
-    logger.info("🤖 Бот запущен")
+    logger.info("🤖 Анонимный бот Сони и Даши запущен. Ожидаю красавчиков...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
