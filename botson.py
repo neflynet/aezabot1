@@ -13,6 +13,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.client.session.aiohttp import AiohttpSession
 from dotenv import load_dotenv
 import aiosqlite
+from aiocryptopay import AioCryptoPay, Networks
 
 # ================= НАСТРОЙКИ =================
 load_dotenv()
@@ -23,6 +24,7 @@ CHANNEL_ID = int(os.getenv("CHANNEL_ID", "-1001234567890"))
 PRIVATE_CHANNEL_ID = int(os.getenv("PRIVATE_CHANNEL_ID", "-1004272303448"))
 PRIVATE_PRICE_STARS = int(os.getenv("PRIVATE_PRICE_STARS", "800"))
 ADMIN_ID = int(os.getenv("ADMIN_ID", "123456789"))
+CRYPTO_BOT_TOKEN = os.getenv("CRYPTO_BOT_TOKEN")
 
 # 📸 ФОТО
 PHOTOS = {
@@ -46,6 +48,11 @@ DB_PATH = "club_bot.db"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
+
+# ================= КРИПТО-КЛИЕНТ =================
+crypto_client = None
+if CRYPTO_BOT_TOKEN:
+    crypto_client = AioCryptoPay(token=CRYPTO_BOT_TOKEN, network=Networks.MAIN_NET)
 
 # ================= БАЗА ДАННЫХ =================
 async def init_db():
@@ -260,6 +267,8 @@ async def buy_private(callback: types.CallbackQuery):
     
     kb = InlineKeyboardBuilder()
     kb.row(InlineKeyboardButton(text=f"💳 Оплатить {final_price}⭐", callback_data="pay_stars"))
+    if crypto_client:
+        kb.row(InlineKeyboardButton(text="💰 Оплатить криптой", callback_data="pay_crypto"))
     kb.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="start"))
     
     photo = get_photo("private")
@@ -285,6 +294,62 @@ async def pay_stars(callback: types.CallbackQuery):
         start_parameter="private_sub"
     )
     await callback.answer()
+
+@dp.callback_query(F.data == "pay_crypto")
+async def pay_crypto(callback: types.CallbackQuery):
+    if not crypto_client:
+        await callback.answer("❌ Крипто-оплата не настроена", show_alert=True)
+        return
+    user = await get_user(callback.from_user.id)
+    discount = user["discount"] if user else 0.0
+    stars_price = calc_price(PRIVATE_PRICE_STARS, discount)
+    # Конвертация: ~1⭐ = 0.02 USDT
+    usdt_amount = round(stars_price * 0.02, 2)
+    
+    invoice = await crypto_client.create_invoice(
+        asset="USDT",
+        amount=usdt_amount,
+        description="Доступ в приватный клуб на 30 дней",
+        payload=f"user_{callback.from_user.id}"
+    )
+    
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="💳 Оплатить через CryptoBot", url=invoice.bot_invoice_url))
+    kb.row(InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_crypto_{invoice.invoice_id}"))
+    kb.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="buy_private"))
+    
+    await callback.message.edit_text(
+        f"💰 Оплата криптой:\nСумма: {usdt_amount} USDT\nСтатус: {invoice.status}",
+        reply_markup=kb.as_markup()
+    )
+
+@dp.callback_query(F.data.startswith("check_crypto_"))
+async def check_crypto_payment(callback: types.CallbackQuery):
+    if not crypto_client:
+        await callback.answer("❌ Ошибка", show_alert=True)
+        return
+    invoice_id = callback.data.split("_")[-1]
+    status = await crypto_client.get_invoice_status(invoice_id)
+    
+    if status == "paid":
+        user_id = callback.from_user.id
+        await activate_subscription(user_id, days=30)
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("INSERT INTO payments (user_id, amount, status) VALUES (?, ?, 'crypto_success')", (user_id, 0))
+            await db.commit()
+        try:
+            link = await bot.create_chat_invite_link(chat_id=PRIVATE_CHANNEL_ID, member_limit=1, name=f"pay_{user_id}")
+            photo = get_photo("success")
+            text = PAYMENT_SUCCESS + f"\n\n🔗 Твоя ссылка для входа:\n{link.invite_link}"
+            if photo:
+                await callback.message.answer_photo(photo=photo, caption=text)
+            else:
+                await callback.message.edit_text(text)
+        except Exception as e:
+            logger.error(f"❌ Ошибка: {e}")
+            await callback.message.edit_text("✅ Оплата подтверждена! Но ссылка не создалась — напиши админу 💌")
+    else:
+        await callback.answer("⏳ Оплата ещё не поступила", show_alert=True)
 
 @dp.pre_checkout_query()
 async def pre_checkout(query: types.PreCheckoutQuery):
@@ -314,6 +379,25 @@ async def on_payment(message: types.Message):
         except:
             pass
 
+@dp.callback_query(F.data == "start")
+async def go_start(callback: types.CallbackQuery):
+    user = await get_user(callback.from_user.id)
+    if not user:
+        ref_code = gen_ref_code()
+        await create_user(callback.from_user.id, callback.from_user.username, ref_code)
+    
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="🔥 Мой канал", url="https://t.me/+pKvsVnMkruZhYjcy"))
+    kb.row(InlineKeyboardButton(text="💎 Приватный клуб", callback_data="buy_private"))
+    kb.row(InlineKeyboardButton(text="🎁 Получить скидку", callback_data="ref_start"))
+    
+    photo = get_photo("welcome")
+    if photo:
+        await callback.message.edit_text(WELCOME_TEXT, reply_markup=kb.as_markup())
+    else:
+        await callback.message.edit_text(WELCOME_TEXT, reply_markup=kb.as_markup())
+    await callback.answer()
+
 @dp.callback_query(F.data == "ref_start")
 async def ref_start(callback: types.CallbackQuery):
     user = await get_user(callback.from_user.id)
@@ -338,7 +422,7 @@ async def ref_start(callback: types.CallbackQuery):
     
     progress = min(screenshots / SCREENSHOTS_REQUIRED, 1.0)
     bar = "█" * int(progress * 10) + "░" * (10 - int(progress * 10))
-    text = f"{REFERRAL_INSTRUCTION}\n\n📊 Твой прогресс:\n[{bar}] {screenshots}/{SCREENSHOTS_REQUIRED} скриншотов\n\n💡 Совет: присылай скриншоты прямо в этот чат — мы проверим и обновим прогресс 😘"
+    text = f"{REFERRAL_INSTRUCTION}\n\n📊 Твой прогресс:\n[{bar}] {screenshots}/{SCREENSHOTS_REQUIRED} скриншотов"
     kb = InlineKeyboardBuilder()
     kb.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="start"))
     photo = get_photo("progress")
@@ -355,11 +439,7 @@ async def handle_screenshot(message: types.Message):
         await message.answer("❌ Сначала нажми /start, красавчик 😘")
         return
     
-    if user["last_screenshot_time"]:
-        last = datetime.fromisoformat(user["last_screenshot_time"])
-        if (datetime.utcnow() - last).total_seconds() < 30:
-            await message.answer("⏳ Не так быстро, красавчик 😏 Отправляй скриншоты с интервалом 30 секунд")
-            return
+    # ⚠️ КУЛДАУН УБРАН ПО ЗАПРОСУ
     
     unlocked = await add_screenshot(user_id)
     screenshots = user["screenshots_sent"] + 1
@@ -374,7 +454,7 @@ async def handle_screenshot(message: types.Message):
             pass
         my_bot = await bot.get_me()
         ref_link = f"https://t.me/{my_bot.username}?start={user['ref_code']}"
-        text = f"🎉 Я всё проверила, красавчик! 💋\n\nТы отправил 10/10 скриншотов — я вижу твоё старание 😏\n\n🔗 Твоя реферальная ссылка:\n`{ref_link}`\n\nПросто скидывай её друзьям. Когда они зайдут по твоей ссылке — ты начнёшь получать бонусы:\n• 5 друзей → скидка 10%\n• 10 друзей → скидка 20%\n• 30 друзей → я напишу тебе ЛИЧНО 💋\n\nПросто делись — и получай удовольствие 😘"
+        text = f"🎉 Я всё проверила, красавчик! 💋\n\nТы отправил 10/10 скриншотов — я вижу твоё старание 😏\n\n🔗 Твоя реферальная ссылка:\n`{ref_link}`"
         photo = get_photo("success")
         if photo:
             await message.answer_photo(photo=photo, caption=text, disable_web_page_preview=True)
