@@ -232,10 +232,24 @@ PAYMENT_SUCCESS = """ Оплата прошла, красавчик! 🔥
 async def auto_approve(request: types.ChatJoinRequest):
     if request.chat.id == CHANNEL_ID:
         try:
-            await bot.approve_chat_join_request(chat_id=request.chat.id, user_id=request.from_user.id)
+            await bot.approve_chat_join_request(
+                chat_id=request.chat.id, 
+                user_id=request.from_user.id
+            )
             logger.info(f"✅ Заявка одобрена: {request.from_user.id}")
+            
+            # Приветственное сообщение
+            kb = InlineKeyboardBuilder()
+            kb.row(InlineKeyboardButton(text="💎 Приватный клуб", callback_data="buy_private"))
+            
+            await bot.send_message(
+                request.from_user.id,
+                "🔥 Привет! Ты в канале Сони и Даши 💋\n\n"
+                "👇 Хочешь доступ к приватному контенту?",
+                reply_markup=kb.as_markup()
+            )
         except Exception as e:
-            logger.error(f" Ошибка одобрения: {e}")
+            logger.error(f"❌ Ошибка одобрения: {e}")
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
