@@ -18,6 +18,7 @@ from aiocryptopay import AioCryptoPay, Networks
 # ================= НАСТРОЙКИ =================
 load_dotenv()
 
+# ВАЖНО: внутри кавычек НЕТ пробелов!
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PROXY_URL = os.getenv("PROXY_URL")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "-1001987654321"))
@@ -26,7 +27,6 @@ PRIVATE_PRICE_STARS = int(os.getenv("PRIVATE_PRICE_STARS", "800"))
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8882474847"))
 CRYPTO_BOT_TOKEN = os.getenv("CRYPTO_BOT_TOKEN")
 
-# 📸 ФОТО
 PHOTOS = {
     "welcome": "https://files.catbox.moe/f44vzq.jpg",
     "private": "https://files.catbox.moe/azf68z.jpg",
@@ -35,7 +35,6 @@ PHOTOS = {
     "progress": "https://files.catbox.moe/tk798n.jpg",
 }
 
-# Рефералка по скриншотам
 TIKTOK_COMMENT = "sonya_dasha_bot лучшие девочки"
 SCREENSHOTS_REQUIRED = 10
 REFERRAL_REWARDS = {
@@ -89,18 +88,12 @@ async def get_user(user_id: int):
 
 async def create_user(user_id: int, username: str, ref_code: str):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "INSERT INTO users (user_id, username, ref_code) VALUES (?, ?, ?)",
-            (user_id, username, ref_code)
-        )
+        await db.execute("INSERT INTO users (user_id, username, ref_code) VALUES (?, ?, ?)", (user_id, username, ref_code))
         await db.commit()
 
 async def add_screenshot(user_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "UPDATE users SET screenshots_sent = screenshots_sent + 1, last_screenshot_time = ? WHERE user_id = ?",
-            (datetime.utcnow().isoformat(), user_id)
-        )
+        await db.execute("UPDATE users SET screenshots_sent = screenshots_sent + 1, last_screenshot_time = ? WHERE user_id = ?", (datetime.utcnow().isoformat(), user_id))
         await db.commit()
         res = await db.execute("SELECT screenshots_sent FROM users WHERE user_id = ?", (user_id,))
         row = await res.fetchone()
@@ -230,13 +223,15 @@ PAYMENT_SUCCESS = """✅ Оплата прошла, красавчик! 🔥
 
 @dp.chat_join_request()
 async def auto_approve(request: types.ChatJoinRequest):
+    logger.info(f"📩 Получена заявка в чат {request.chat.id} от {request.from_user.id}")
+    
     if request.chat.id == CHANNEL_ID:
         try:
             await bot.approve_chat_join_request(
                 chat_id=request.chat.id,
                 user_id=request.from_user.id
             )
-            logger.info(f"✅ Заявка одобрена: {request.from_user.id}")
+            logger.info(f"✅ Заявка успешно одобрена для: {request.from_user.id}")
             
             try:
                 user = await get_user(request.from_user.id)
@@ -255,7 +250,7 @@ async def auto_approve(request: types.ChatJoinRequest):
 
                 text = (
                     f"🔥 {request.from_user.first_name}, привет! 💋\n\n"
-                    f"Мы уже одобрили тебя в канал — добро пожаловать 😈\n\n"
+                    f"Мы одобрили твою заявку в канал — добро пожаловать 😈\n\n"
                     f"Но то, что ты видишь там — это лишь верхушка айсберга 🌹\n\n"
                     f"В нашем Приватном клубе совсем другой уровень:\n"
                     f"🔞 Контент, которого нет в открытом канале\n"
@@ -267,23 +262,16 @@ async def auto_approve(request: types.ChatJoinRequest):
 
                 photo = get_photo("welcome")
                 if photo:
-                    await bot.send_photo(
-                        chat_id=request.from_user.id,
-                        photo=photo,
-                        caption=text,
-                        reply_markup=kb.as_markup()
-                    )
+                    await bot.send_photo(chat_id=request.from_user.id, photo=photo, caption=text, reply_markup=kb.as_markup())
                 else:
-                    await bot.send_message(
-                        chat_id=request.from_user.id,
-                        text=text,
-                        reply_markup=kb.as_markup()
-                    )
+                    await bot.send_message(chat_id=request.from_user.id, text=text, reply_markup=kb.as_markup())
             except Exception as e:
                 logger.warning(f"⚠️ Не удалось отправить ЛС: {e}")
                 
         except Exception as e:
-            logger.error(f"❌ Ошибка одобрения: {e}")
+            logger.error(f"❌ Ошибка одобрения заявки: {e}")
+    else:
+        logger.warning(f"⚠️ Заявка пришла в другой чат (ID: {request.chat.id}), игнорируем.")
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
