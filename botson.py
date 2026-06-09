@@ -8,7 +8,9 @@ from pathlib import Path
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command
-from aiogram.types import LabeledPrice, InlineKeyboardButton, FSInputFile
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import LabeledPrice, InlineKeyboardButton, FSInputFile, BotCommand
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.client.session.aiohttp import AiohttpSession
 from dotenv import load_dotenv
@@ -18,7 +20,7 @@ from aiocryptopay import AioCryptoPay, Networks
 # ================= НАСТРОЙКИ =================
 load_dotenv()
 
-# ВАЖНО: Пробелов внутри кавычек НЕТ! ID каналов исправлены.
+# ВАЖНО: Пробелов внутри кавычек НЕТ!
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PROXY_URL = os.getenv("PROXY_URL")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "-1003863080862"))
@@ -47,6 +49,10 @@ DB_PATH = "club_bot.db"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
+
+# ================= FSM =================
+class BroadcastState(StatesGroup):
+    waiting_message = State()
 
 # ================= КРИПТО-КЛИЕНТ =================
 crypto_client = None
@@ -85,6 +91,12 @@ async def get_user(user_id: int):
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)) as cur:
             return await cur.fetchone()
+
+async def get_all_user_ids():
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT user_id FROM users") as cur:
+            rows = await cur.fetchall()
+            return [row[0] for row in rows]
 
 async def create_user(user_id: int, username: str, ref_code: str):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -142,6 +154,9 @@ def get_photo(key: str):
         return FSInputFile(path)
     return None
 
+def stars_to_rubles(stars: int) -> int:
+    return round(stars * 1.3)
+
 # ================= БОТ =================
 def create_bot():
     if PROXY_URL and PROXY_URL.strip():
@@ -157,11 +172,10 @@ def create_bot():
 bot = create_bot()
 dp = Dispatcher()
 
-# ================= ТЕКСТЫ =================
+# ================= ТЕКСТЫ (ПЕРЕПИСАНЫ ДЛЯ ДОВЕРИЯ) =================
 WELCOME_TEXT = """🔥 Привет, красавчик! 💋
 
-Ты попал в закрытый клуб двух самых горячих девчонок — Сони и Даши 🌹
-
+Ты попал в закрытый клуб Сони и Даши 🌹
 Здесь нет скучных постов. Только:
 ✨ Эксклюзивные фото, которых нет в открытом доступе
 🎬 Личные видео-приветы для своих
@@ -172,21 +186,35 @@ WELCOME_TEXT = """🔥 Привет, красавчик! 💋
 
 👇 Выбирай, что хочешь прямо сейчас:"""
 
-PRIVATE_TEXT = """💎 Приватный клуб Сони и Даши
+PRIVATE_TEXT = """💋 Привет, красавчик! Рада, что ты здесь 😏
 
-Здесь то, чего ты не увидишь нигде:
-🔥 Личные видео-приветы только для тебя
-💋 Голосовые, в которых мы шепчем твоё имя
-📸 Фото, которые мы делаем только для «своих»
-🎁 Сюрпризы и розыгрыши для подписчиков
+В привате у нас совсем другая атмосфера:
+🔥 Видео и фото, которые стыдно показывать в обычном канале
+💬 Голосовые, где мы шепчем лично для тебя
+🎁 И иногда даже выполняем твои маленькие фантазии...
 
-Это не просто контент. Это — наше внимание только к тебе 😏
+💰 Доступ на месяц: {price}⭐ (это всего около {rubles}₽)
+{discount_text}
 
-💰 Цена для тебя: {price}⭐{discount_text}"""
+⚠️ Не переживай, оплата полностью безопасна — это официальная кнопка Telegram, деньги списываются так же просто, как за любую подписку в приложении.
+
+Нажимай «Оплатить» и сразу заходи к нам 🤫"""
+
+STARS_GUIDE_TEXT = """📖 Не знаешь, как оплатить звёздами? Без паники, это проще, чем кажется! 😘
+
+⭐ Звёзды (Stars) — это просто способ оплаты внутри Telegram, как привязанная карта в App Store или Google Play. Никаких сложных кошельков!
+
+💳 Как это сделать за 1 минуту:
+1️⃣ Нажми кнопку «Оплатить» ниже 👇
+2️⃣ В открывшемся окне нажми «Купить звёзды» (или «Добавить»)
+3️⃣ Выбери нужное количество (800 звёзд ≈ 1040 руб.) и оплати своей обычной банковской картой
+4️⃣ Всё! Звёзды зачислятся, и ты сразу получишь доступ к нам 🔥
+
+🆘 Если вдруг что-то не получается — просто напиши нам, мы всегда на связи и поможем! 💌"""
 
 REFERRAL_INSTRUCTION = f"""🎁 Хочешь скидку на приват? Всё просто!
 
-Шаг 1: Открой ТикТок
+📱 Шаг 1: Открой ТикТок
 ✍️ Шаг 2: Оставь 10 комментариев под нашими видео:
    «{TIKTOK_COMMENT}»
 📸 Шаг 3: Пришли скриншоты каждого комментария ПРЯМО В ЭТОТ БОТ
@@ -225,18 +253,28 @@ PAYMENT_SUCCESS = """✅ Оплата прошла, красавчик! 🔥
 
 ✨ Не забывай заглядывать — мы часто добавляем новое"""
 
+HELP_TEXT = """📋 Список команд:
+/start — главное меню
+/stars_guide — как оплатить звёздами (простой гайд)
+/help — список всех команд
+
+💎 В главном меню ты найдёшь:
+• Вход в Приватный клуб
+• Программу скидок за рефералов
+
+По всем вопросам пиши нам, мы не кусаемся 💌"""
+
 # ================= ХЕНДЛЕРЫ =================
 
 @dp.chat_join_request()
 async def auto_approve(request: types.ChatJoinRequest):
-    # Теперь бот проверяет именно тот ID, который ты указал (-1003863080862)
     if request.chat.id == CHANNEL_ID:
         try:
             await bot.approve_chat_join_request(
                 chat_id=request.chat.id,
                 user_id=request.from_user.id
             )
-            logger.info(f"✅ Заявка одобрена в основном канале для: {request.from_user.id}")
+            logger.info(f"✅ Заявка одобрена: {request.from_user.id}")
             
             try:
                 user = await get_user(request.from_user.id)
@@ -247,6 +285,7 @@ async def auto_approve(request: types.ChatJoinRequest):
 
                 discount = user["discount"] if user else 0.0
                 price = calc_price(PRIVATE_PRICE_STARS, discount)
+                rubles = stars_to_rubles(price)
                 discount_text = f"\n🎁 Твоя скидка: {int(discount*100)}%" if discount > 0 else ""
 
                 kb = InlineKeyboardBuilder()
@@ -255,31 +294,39 @@ async def auto_approve(request: types.ChatJoinRequest):
 
                 text = (
                     f"🔥 {request.from_user.first_name}, привет! 💋\n\n"
-                    f"Мы одобрили твою заявку в канал — добро пожаловать 😈\n\n"
+                    f"Мы уже одобрили тебя в канал — добро пожаловать 😈\n\n"
                     f"Но то, что ты видишь там — это лишь верхушка айсберга 🌹\n\n"
                     f"В нашем Приватном клубе совсем другой уровень:\n"
                     f"🔞 Контент, которого нет в открытом канале\n"
                     f"💬 Голосовые и видео-приветы лично для тебя\n"
                     f"🎁 Сюрпризы и розыгрыши только для своих\n\n"
-                    f"💰 Доступ: {price}⭐{discount_text}\n\n"
+                    f"💰 Доступ: {price}⭐ (≈ {rubles} руб.){discount_text}\n\n"
                     f"👇 Готов? Жми:"
                 )
 
                 photo = get_photo("welcome")
                 if photo:
-                    await bot.send_photo(chat_id=request.from_user.id, photo=photo, caption=text, reply_markup=kb.as_markup())
+                    await bot.send_photo(
+                        chat_id=request.from_user.id,
+                        photo=photo,
+                        caption=text,
+                        reply_markup=kb.as_markup()
+                    )
                 else:
-                    await bot.send_message(chat_id=request.from_user.id, text=text, reply_markup=kb.as_markup())
+                    await bot.send_message(
+                        chat_id=request.from_user.id,
+                        text=text,
+                        reply_markup=kb.as_markup()
+                    )
             except Exception as e:
                 logger.warning(f"⚠️ Не удалось отправить ЛС: {e}")
                 
         except Exception as e:
-            logger.error(f"❌ Ошибка одобрения заявки: {e}")
-    else:
-        logger.warning(f"⚠️ Заявка пришла в другой чат (ID: {request.chat.id}), игнорируем.")
+            logger.error(f"❌ Ошибка одобрения: {e}")
 
 @dp.message(CommandStart())
-async def cmd_start(message: types.Message):
+async def cmd_start(message: types.Message, state: FSMContext):
+    await state.clear()
     user_id = message.from_user.id
     user = await get_user(user_id)
     if not user:
@@ -298,6 +345,60 @@ async def cmd_start(message: types.Message):
     else:
         await message.answer(WELCOME_TEXT, reply_markup=kb.as_markup(), disable_web_page_preview=True)
 
+@dp.message(Command("help"))
+async def cmd_help(message: types.Message):
+    await message.answer(HELP_TEXT)
+
+@dp.message(Command("stars_guide"))
+async def cmd_stars_guide(message: types.Message):
+    await message.answer(STARS_GUIDE_TEXT)
+
+# ================= РАССЫЛКА (АДМИН) =================
+@dp.message(Command("broadcast"))
+async def cmd_broadcast(message: types.Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return
+    await state.set_state(BroadcastState.waiting_message)
+    await message.answer(
+        "📢 Рассылка\n\n"
+        "Напиши или перешли сообщение — я отправлю его всем пользователям бота.\n"
+        "Поддерживаются: текст, фото, видео, голосовые.\n\n"
+        "Для отмены напиши /cancel"
+    )
+
+@dp.message(Command("cancel"))
+async def cmd_cancel(message: types.Message, state: FSMContext):
+    current = await state.get_state()
+    if current is not None:
+        await state.clear()
+        await message.answer("✅ Отменено")
+
+@dp.message(BroadcastState.waiting_message)
+async def do_broadcast(message: types.Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return
+    await state.clear()
+    user_ids = await get_all_user_ids()
+    sent = 0
+    failed = 0
+
+    await message.answer(f"⏳ Начинаю рассылку на {len(user_ids)} пользователей...")
+
+    for uid in user_ids:
+        try:
+            await message.copy_to(uid)
+            sent += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            failed += 1
+
+    await message.answer(
+        f"✅ Рассылка завершена!\n\n"
+        f"📨 Отправлено: {sent}\n"
+        f"❌ Не доставлено: {failed}"
+    )
+
+# ================= ОПЛАТА =================
 @dp.callback_query(F.data == "buy_private")
 async def buy_private(callback: types.CallbackQuery):
     user = await get_user(callback.from_user.id)
@@ -307,20 +408,27 @@ async def buy_private(callback: types.CallbackQuery):
     
     discount = user["discount"]
     final_price = calc_price(PRIVATE_PRICE_STARS, discount)
+    rubles = stars_to_rubles(final_price)
     discount_text = f"\n🎁 Твоя персональная скидка: {int(discount*100)}%" if discount > 0 else ""
     
-    text = PRIVATE_TEXT.format(price=final_price, discount_text=discount_text)
+    text = PRIVATE_TEXT.format(price=final_price, rubles=rubles, discount_text=discount_text)
     
     kb = InlineKeyboardBuilder()
-    kb.row(InlineKeyboardButton(text=f"💳 Оплатить {final_price}⭐", callback_data="pay_stars"))
+    kb.row(InlineKeyboardButton(text=f"⭐ Оплатить {final_price} Stars (≈{rubles}₽)", callback_data="pay_stars"))
     if crypto_client:
         kb.row(
             InlineKeyboardButton(text="💰 USDT (TRC20)", callback_data="pay_crypto_usdt"),
             InlineKeyboardButton(text="💎 TON", callback_data="pay_crypto_ton")
         )
+    kb.row(InlineKeyboardButton(text="📖 Как купить Stars? (Гайд)", callback_data="stars_guide_inline"))
     kb.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="start"))
     
     await callback.message.answer(text, reply_markup=kb.as_markup())
+    await callback.answer()
+
+@dp.callback_query(F.data == "stars_guide_inline")
+async def stars_guide_inline(callback: types.CallbackQuery):
+    await callback.message.answer(STARS_GUIDE_TEXT)
     await callback.answer()
 
 @dp.callback_query(F.data == "pay_stars")
@@ -397,7 +505,7 @@ async def check_crypto_payment(callback: types.CallbackQuery):
                 break
         
         if not invoice:
-            await callback.answer("⚠️ Инвойс не найден", show_alert=True)
+            await callback.answer("❌ Инвойс не найден", show_alert=True)
             return
         
         if invoice.status == "paid":
@@ -411,6 +519,21 @@ async def check_crypto_payment(callback: types.CallbackQuery):
                 )
                 await db.commit()
             
+            user = await get_user(user_id)
+            username = f"@{user['username']}" if user and user['username'] else "без юзернейма"
+            try:
+                await bot.send_message(
+                    ADMIN_ID,
+                    f"💰 НОВАЯ ПОКУПКА!\n\n"
+                    f"👤 Пользователь: {username}\n"
+                    f"🆔 ID: {user_id}\n"
+                    f"💎 Способ: Крипто ({invoice.asset})\n"
+                    f"💵 Сумма: {invoice.amount} {invoice.asset}\n"
+                    f"📅 Время: {datetime.utcnow().strftime('%d.%m.%Y %H:%M')} UTC"
+                )
+            except Exception:
+                pass
+
             try:
                 link = await bot.create_chat_invite_link(
                     chat_id=PRIVATE_CHANNEL_ID,
@@ -420,7 +543,7 @@ async def check_crypto_payment(callback: types.CallbackQuery):
                 text = PAYMENT_SUCCESS + f"\n\n🔗 Ссылка для входа:\n{link.invite_link}"
                 await callback.message.answer(text)
             except Exception as e:
-                logger.error(f"❌ Ошибка создания ссылки: {e}")
+                logger.error(f"❌ Ошибка: {e}")
                 await callback.message.answer("✅ Оплата подтверждена! Напиши админу для доступа 💌")
         else:
             await callback.answer("⏳ Оплата ещё не поступила", show_alert=True)
@@ -443,7 +566,22 @@ async def on_payment(message: types.Message):
             (user_id, message.successful_payment.total_amount, "XTR")
         )
         await db.commit()
-    
+
+    username = f"@{message.from_user.username}" if message.from_user.username else "без юзернейма"
+    full_name = message.from_user.full_name or ""
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            f"💰 НОВАЯ ПОКУПКА!\n\n"
+            f"👤 Пользователь: {username} ({full_name})\n"
+            f"🆔 ID: {user_id}\n"
+            f"⭐ Способ: Telegram Stars\n"
+            f"💵 Сумма: {message.successful_payment.total_amount}⭐\n"
+            f"📅 Время: {datetime.utcnow().strftime('%d.%m.%Y %H:%M')} UTC"
+        )
+    except Exception:
+        pass
+
     try:
         link = await bot.create_chat_invite_link(
             chat_id=PRIVATE_CHANNEL_ID,
@@ -459,7 +597,7 @@ async def on_payment(message: types.Message):
         logger.info(f"💰 Оплата от {user_id}: {message.successful_payment.total_amount}⭐")
     except Exception as e:
         logger.error(f"❌ Ошибка: {e}")
-        await message.answer("⚠️ Оплата прошла, но произошла ошибка. Напиши админу 💌")
+        await message.answer("⚠️ Оплата прошла, но ошибка. Напиши админу 💌")
 
 @dp.callback_query(F.data == "start")
 async def go_start(callback: types.CallbackQuery):
@@ -512,9 +650,15 @@ async def ref_start(callback: types.CallbackQuery):
         await callback.message.answer_photo(photo=photo, caption=text, reply_markup=kb.as_markup())
     else:
         await callback.message.answer(text, reply_markup=kb.as_markup())
+    await callback.answer()
 
 @dp.message(F.photo | F.document)
-async def handle_screenshot(message: types.Message):
+async def handle_screenshot(message: types.Message, state: FSMContext):
+    current = await state.get_state()
+    if current == BroadcastState.waiting_message:
+        await do_broadcast(message, state)
+        return
+        
     user_id = message.from_user.id
     user = await get_user(user_id)
     if not user:
@@ -548,7 +692,7 @@ async def handle_screenshot(message: types.Message):
         if remaining > 0:
             text += f"Осталось всего {remaining} скриншот{'а' if remaining in [2,3,4] else 'ов'}!\nПродолжай в том же духе — и скоро получишь свою реферальную ссылку 🔥"
         else:
-            text += "Ты справился! Мы проверим скриншоты и скоро напишем тебе 😘"
+            text += "✅ Ты справился! Мы проверим скриншоты и скоро напишем тебе 😘"
         photo = get_photo("progress")
         if photo:
             await message.answer_photo(photo=photo, caption=text)
@@ -580,6 +724,13 @@ async def main():
     await init_db()
     if not PHOTOS["welcome"].startswith("http"):
         Path("photos").mkdir(exist_ok=True)
+    
+    await bot.set_my_commands([
+        BotCommand(command="start", description="🏠 Главное меню"),
+        BotCommand(command="stars_guide", description="📖 Как оплатить звёздами"),
+        BotCommand(command="help", description="📋 Список команд"),
+    ])
+
     logger.info("🤖 Анонимный бот Сони и Даши запущен. Ожидаю красавчиков...")
     await dp.start_polling(bot)
 
