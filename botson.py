@@ -110,18 +110,12 @@ async def get_all_user_ids():
 
 async def create_user(user_id: int, username: str, ref_code: str):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "INSERT INTO users (user_id, username, ref_code) VALUES (?, ?, ?)",
-            (user_id, username, ref_code)
-        )
+        await db.execute("INSERT INTO users (user_id, username, ref_code) VALUES (?, ?, ?)", (user_id, username, ref_code))
         await db.commit()
 
 async def add_screenshot(user_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "UPDATE users SET screenshots_sent = screenshots_sent + 1, last_screenshot_time = ? WHERE user_id = ?",
-            (datetime.utcnow().isoformat(), user_id)
-        )
+        await db.execute("UPDATE users SET screenshots_sent = screenshots_sent + 1, last_screenshot_time = ? WHERE user_id = ?", (datetime.utcnow().isoformat(), user_id))
         await db.commit()
         res = await db.execute("SELECT screenshots_sent FROM users WHERE user_id = ?", (user_id,))
         row = await res.fetchone()
@@ -205,7 +199,6 @@ dp = Dispatcher()
 WELCOME_TEXT = """🔥 Привет, красавчик! 💋
 
 Ты попал в закрытый клуб Сони и Даши 🌹
-
 Здесь нет скучных постов. Только:
 ✨ Эксклюзивные фото, которых нет в открытом доступе
 🎬 Личные видео-приветы для своих
@@ -286,10 +279,7 @@ HELP_TEXT = """📋 Команды:
 async def auto_approve(request: types.ChatJoinRequest):
     if request.chat.id == CHANNEL_ID:
         try:
-            await bot.approve_chat_join_request(
-                chat_id=request.chat.id,
-                user_id=request.from_user.id
-            )
+            await bot.approve_chat_join_request(chat_id=request.chat.id, user_id=request.from_user.id)
             logger.info(f"✅ Заявка одобрена: {request.from_user.id}")
             
             try:
@@ -308,12 +298,7 @@ async def auto_approve(request: types.ChatJoinRequest):
                 kb.row(InlineKeyboardButton(text="💎 Войти в Приватный клуб", callback_data="buy_private"))
                 kb.row(InlineKeyboardButton(text="🎁 Получить скидку", callback_data="ref_start"))
 
-                text = (
-                    f"🔥 {request.from_user.first_name}, привет! 💋\n\n"
-                    f"Мы одобрили твою заявку — добро пожаловать 😈\n\n"
-                    f"💰 Доступ: {price}⭐ (≈ {rubles} руб.){discount_text}\n\n"
-                    f"👇 Готов? Жми:"
-                )
+                text = f"🔥 {request.from_user.first_name}, привет! 💋\n\nМы одобрили твою заявку — добро пожаловать 😈\n\n💰 Доступ: {price}⭐ (≈ {rubles} руб.){discount_text}\n\n👇 Готов? Жми:"
 
                 photo = get_photo("welcome")
                 if photo:
@@ -375,10 +360,7 @@ async def cmd_add_promo(message: types.Message):
 
     async with aiosqlite.connect(DB_PATH) as db:
         try:
-            await db.execute(
-                "INSERT INTO promo_codes (code, discount, max_uses) VALUES (?, ?, ?)",
-                (code, discount, max_uses)
-            )
+            await db.execute("INSERT INTO promo_codes (code, discount, max_uses) VALUES (?, ?, ?)", (code, discount, max_uses))
             await db.commit()
             await message.answer(f"✅ Промокод {code} создан!\nСкидка: {int(discount*100)}%\nЛимит: {max_uses}")
         except aiosqlite.IntegrityError:
@@ -401,15 +383,9 @@ async def process_promo(message: types.Message, state: FSMContext):
         return
     
     await apply_promo_to_user(message.from_user.id, code, promo["discount"])
-    
     await message.answer(f"🎉 Промокод {code} активирован!\nСкидка {int(promo['discount']*100)}% применена!\n\nПеренаправляю к оплате 👇")
     
-    callback_query = types.CallbackQuery(
-        id="0",
-        from_user=message.from_user,
-        chat_instance="0",
-        data="buy_private"
-    )
+    callback_query = types.CallbackQuery(id="0", from_user=message.from_user, chat_instance="0", data="buy_private")
     await buy_private(callback_query)
 
 # ================= РАССЫЛКА =================
@@ -529,20 +505,13 @@ async def pay_crypto(callback: types.CallbackQuery):
         title = "💎 Оплата TON"
     
     try:
-        invoice = await crypto_client.create_invoice(
-            asset=asset,
-            amount=amount,
-            description="Доступ в приват на 30 дней",
-            payload=f"user_{callback.from_user.id}_{crypto_type}"
-        )
-        
+        invoice = await crypto_client.create_invoice(asset=asset, amount=amount, description="Доступ в приват на 30 дней", payload=f"user_{callback.from_user.id}_{crypto_type}")
         kb = InlineKeyboardBuilder()
         kb.row(InlineKeyboardButton(text="💳 Оплатить через CryptoBot", url=invoice.bot_invoice_url))
         kb.row(InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_crypto_{invoice.invoice_id}"))
         kb.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="buy_private"))
         
-        text = f"{title}\nСумма: {amount} {crypto_type.upper()}\nСтатус: {invoice.status}"
-        await callback.message.answer(text, reply_markup=kb.as_markup())
+        await callback.message.answer(f"{title}\nСумма: {amount} {crypto_type.upper()}\nСтатус: {invoice.status}", reply_markup=kb.as_markup())
         await callback.answer()
     except Exception as e:
         logger.error(f"❌ Ошибка: {e}")
@@ -555,14 +524,9 @@ async def check_crypto_payment(callback: types.CallbackQuery):
         return
     
     invoice_id = callback.data.split("_")[-1]
-    
     try:
         invoices = await crypto_client.get_invoices(status="active")
-        invoice = None
-        for inv in invoices:
-            if str(inv.invoice_id) == invoice_id:
-                invoice = inv
-                break
+        invoice = next((inv for inv in invoices if str(inv.invoice_id) == invoice_id), None)
         
         if not invoice:
             await callback.answer("❌ Инвойс не найден", show_alert=True)
@@ -571,24 +535,19 @@ async def check_crypto_payment(callback: types.CallbackQuery):
         if invoice.status == "paid":
             user_id = callback.from_user.id
             user = await get_user(user_id)
-            
             await activate_subscription(user_id, days=30)
             
             if user and user["active_promo"]:
                 await increment_promo_use(user["active_promo"])
             
             async with aiosqlite.connect(DB_PATH) as db:
-                await db.execute(
-                    "INSERT INTO payments (user_id, amount, currency, status) VALUES (?, ?, ?, 'crypto_success')",
-                    (user_id, invoice.amount, invoice.asset)
-                )
+                await db.execute("INSERT INTO payments (user_id, amount, currency, status) VALUES (?, ?, ?, 'crypto_success')", (user_id, invoice.amount, invoice.asset))
                 await db.commit()
             
             try:
                 link = await bot.create_chat_invite_link(chat_id=PRIVATE_CHANNEL_ID, member_limit=1, name=f"pay_{user_id}")
                 await callback.message.answer(PAYMENT_SUCCESS + f"\n\n🔗 Ссылка:\n{link.invite_link}")
-            except Exception as e:
-                logger.error(f"❌ Ошибка: {e}")
+            except Exception:
                 await callback.message.answer("✅ Оплата подтверждена! Напиши админу 💌")
         else:
             await callback.answer("⏳ Оплата ещё не поступила", show_alert=True)
@@ -604,17 +563,13 @@ async def pre_checkout(query: types.PreCheckoutQuery):
 async def on_payment(message: types.Message):
     user_id = message.from_user.id
     user = await get_user(user_id)
-    
     await activate_subscription(user_id, days=30)
     
     if user and user["active_promo"]:
         await increment_promo_use(user["active_promo"])
     
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "INSERT INTO payments (user_id, amount, currency, status) VALUES (?, ?, ?, 'success')",
-            (user_id, message.successful_payment.total_amount, "XTR")
-        )
+        await db.execute("INSERT INTO payments (user_id, amount, currency, status) VALUES (?, ?, ?, 'success')", (user_id, message.successful_payment.total_amount, "XTR"))
         await db.commit()
 
     try:
@@ -625,7 +580,6 @@ async def on_payment(message: types.Message):
             await message.answer_photo(photo=photo, caption=text)
         else:
             await message.answer(text)
-        logger.info(f"💰 Оплата от {user_id}: {message.successful_payment.total_amount}⭐")
     except Exception as e:
         logger.error(f"❌ Ошибка: {e}")
         await message.answer("⚠️ Оплата прошла, но ошибка. Напиши админу 💌")
@@ -657,7 +611,6 @@ async def ref_start(callback: types.CallbackQuery):
         my_bot = await bot.get_me()
         ref_link = f"https://t.me/{my_bot.username}?start={user['ref_code']}"
         text = REFERRAL_UNLOCKED.format(link=ref_link)
-        
         kb = InlineKeyboardBuilder()
         kb.row(InlineKeyboardButton(text="📋 Скопировать", switch_inline_query=user['ref_code']))
         kb.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="start"))
