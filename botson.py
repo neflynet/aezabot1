@@ -477,22 +477,39 @@ async def process_promo(message: types.Message, state: FSMContext):
 
     promo = await check_promo_code(code)
     if not promo:
-        await message.answer("❌ Промокод недействителен или достиг лимита.")
+        await message.answer("❌ Промокод недействителен или не существует.")
         return
 
     await apply_promo_to_user(message.from_user.id, code, promo["discount"])
 
-    await message.answer(
-        f"🎉 Промокод {code} активирован!\n"
-        f"Скидка {int(promo['discount'] * 100)}% применена!\n\n"
-        f"Перенаправляю к оплате 👇"
+    discount = promo["discount"]
+    final_price = calc_price(PRIVATE_PRICE_STARS, discount)
+    rubles = stars_to_rubles(final_price)
+
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(
+        text=f"⭐ Оплатить {final_price} Stars (≈{rubles}₽)",
+        callback_data="pay_stars"
+    ))
+    if crypto_client:
+        kb.row(
+            InlineKeyboardButton(text="💰 USDT (TRC20)", callback_data="pay_crypto_usdt"),
+            InlineKeyboardButton(text="💎 TON", callback_data="pay_crypto_ton")
+        )
+    kb.row(InlineKeyboardButton(text="📖 Как купить Stars?", callback_data="stars_guide_inline"))
+    kb.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="start"))
+
+    text = (
+        f"🎉 Промокод <b>{code}</b> активирован!\n"
+        f"Скидка <b>{int(discount * 100)}%</b> применена!\n\n"
+        f"💋 Приватный клуб\n\n"
+        f"💰 Обычная цена: 800⭐\n"
+        f"🔥 Твоя цена: <b>{final_price}⭐ (≈{rubles}₽)</b>\n\n"
+        f"⚠️ Оплата полностью безопасна — официальная кнопка Telegram.\n\n"
+        f"👇 Нажимай «Оплатить»:"
     )
 
-    # ИСПРАВЛЕНО: раньше здесь создавался фейковый CallbackQuery,
-    # который вызывал AttributeError (callback.message == None).
-    # Теперь используем общую функцию отображения меню.
-    user = await get_user(message.from_user.id)
-    await send_buy_private_menu(message, user)
+    await message.answer(text, reply_markup=kb.as_markup(), parse_mode="HTML")
 
 # ================= РАССЫЛКА =================
 @dp.message(Command("broadcast"))
