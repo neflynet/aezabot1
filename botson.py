@@ -168,14 +168,43 @@ async def increment_promo_use(promo_code: str):
         )
         await db.commit()
 
+async def clear_user_promo(user_id: int):
+    """Сбрасывает промокод у пользователя (если лимит исчерпан на момент оплаты)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE users SET active_promo = NULL, discount = 0.0 WHERE user_id = ?",
+            (user_id,)
+        )
+        await db.commit()
+
 async def check_promo_code(code: str):
+    """
+    Проверяет только существование и активность промокода.
+    Лимит использований НЕ проверяется здесь — проверяется в момент оплаты.
+    Регистр букв не важен.
+    """
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM promo_codes WHERE code = ?", (code.upper(),)) as cur:
             promo = await cur.fetchone()
-            if promo and promo["is_active"] == 1 and promo["current_uses"] < promo["max_uses"]:
+            if promo and promo["is_active"] == 1:
                 return promo
             return None
+
+async def verify_promo_limit(code: str) -> bool:
+    """
+    Проверяет, есть ли ещё свободные использования промокода.
+    Вызывается в момент оплаты — не при вводе.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT current_uses, max_uses FROM promo_codes WHERE code = ? AND is_active = 1",
+            (code,)
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            return False
+        return row[0] < row[1]
 
 # ================= УТИЛИТЫ =================
 def gen_ref_code():
@@ -519,7 +548,22 @@ async def stars_guide_inline(callback: types.CallbackQuery):
 @dp.callback_query(F.data == "pay_stars")
 async def pay_stars(callback: types.CallbackQuery):
     user = await get_user(callback.from_user.id)
-    discount = user["discount"] if user else 0.0
+    discount = 0.0
+
+    if user and user["active_promo"]:
+        # Проверяем лимит промокода в момент оплаты, а не при вводе
+        if await verify_promo_limit(user["active_promo"]):
+            discount = user["discount"]
+        else:
+            # Лимит исчерпан — сбрасываем промокод, оплата по полной цене
+            await clear_user_promo(callback.from_user.id)
+            await callback.message.answer(
+                "⚠️ К сожалению, лимит промокода уже исчерпан.\n"
+                "Оплата будет по полной цене: 800⭐"
+            )
+    elif user:
+        discount = user["discount"]
+
     price = calc_price(PRIVATE_PRICE_STARS, discount)
 
     await bot.send_invoice(
@@ -541,7 +585,21 @@ async def pay_crypto(callback: types.CallbackQuery):
 
     crypto_type = callback.data.split("_")[-1]
     user = await get_user(callback.from_user.id)
-    stars_price = calc_price(PRIVATE_PRICE_STARS, user["discount"] if user else 0.0)
+    discount = 0.0
+
+    if user and user["active_promo"]:
+        if await verify_promo_limit(user["active_promo"]):
+            discount = user["discount"]
+        else:
+            await clear_user_promo(callback.from_user.id)
+            await callback.message.answer(
+                "⚠️ К сожалению, лимит промокода уже исчерпан.\n"
+                "Оплата будет по полной цене."
+            )
+    elif user:
+        discount = user["discount"]
+
+    stars_price = calc_price(PRIVATE_PRICE_STARS, discount)
 
     if crypto_type == "usdt":
         amount = round(stars_price * 0.02, 2)
