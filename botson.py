@@ -472,44 +472,63 @@ async def ask_promo(callback: types.CallbackQuery, state: FSMContext):
 
 @dp.message(PromoState.waiting_for_code)
 async def process_promo(message: types.Message, state: FSMContext):
-    await state.clear()
-    code = message.text.strip().upper()
-
-    promo = await check_promo_code(code)
-    if not promo:
-        await message.answer("❌ Промокод недействителен или не существует.")
+    # state.clear() только ПОСЛЕ успешной обработки — иначе при ошибке
+    # пользователь теряет состояние и не может повторить без нажатия кнопки
+    if not message.text:
+        await message.answer("❌ Пожалуйста, отправь промокод текстом.")
         return
 
-    await apply_promo_to_user(message.from_user.id, code, promo["discount"])
+    code = message.text.strip().upper()
 
-    discount = promo["discount"]
-    final_price = calc_price(PRIVATE_PRICE_STARS, discount)
-    rubles = stars_to_rubles(final_price)
+    try:
+        promo = await check_promo_code(code)
+        if not promo:
+            await message.answer(
+                "❌ Промокод не найден или неактивен.\n"
+                "Проверь правильность и попробуй ещё раз:"
+            )
+            return
 
-    kb = InlineKeyboardBuilder()
-    kb.row(InlineKeyboardButton(
-        text=f"⭐ Оплатить {final_price} Stars (≈{rubles}₽)",
-        callback_data="pay_stars"
-    ))
-    if crypto_client:
-        kb.row(
-            InlineKeyboardButton(text="💰 USDT (TRC20)", callback_data="pay_crypto_usdt"),
-            InlineKeyboardButton(text="💎 TON", callback_data="pay_crypto_ton")
+        await apply_promo_to_user(message.from_user.id, code, promo["discount"])
+
+        discount = promo["discount"]
+        final_price = calc_price(PRIVATE_PRICE_STARS, discount)
+        rubles = stars_to_rubles(final_price)
+
+        kb = InlineKeyboardBuilder()
+        kb.row(InlineKeyboardButton(
+            text=f"⭐ Оплатить {final_price} Stars (≈{rubles}₽)",
+            callback_data="pay_stars"
+        ))
+        if crypto_client:
+            kb.row(
+                InlineKeyboardButton(text="💰 USDT (TRC20)", callback_data="pay_crypto_usdt"),
+                InlineKeyboardButton(text="💎 TON", callback_data="pay_crypto_ton")
+            )
+        kb.row(InlineKeyboardButton(text="📖 Как купить Stars?", callback_data="stars_guide_inline"))
+        kb.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="start"))
+
+        text = (
+            f"🎉 Промокод <b>{code}</b> активирован!\n"
+            f"Скидка <b>{int(discount * 100)}%</b> применена!\n\n"
+            f"💋 Приватный клуб\n\n"
+            f"💰 Обычная цена: 800⭐\n"
+            f"🔥 Твоя цена: <b>{final_price}⭐ (≈{rubles}₽)</b>\n\n"
+            f"⚠️ Оплата полностью безопасна — официальная кнопка Telegram.\n\n"
+            f"👇 Нажимай «Оплатить»:"
         )
-    kb.row(InlineKeyboardButton(text="📖 Как купить Stars?", callback_data="stars_guide_inline"))
-    kb.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="start"))
 
-    text = (
-        f"🎉 Промокод <b>{code}</b> активирован!\n"
-        f"Скидка <b>{int(discount * 100)}%</b> применена!\n\n"
-        f"💋 Приватный клуб\n\n"
-        f"💰 Обычная цена: 800⭐\n"
-        f"🔥 Твоя цена: <b>{final_price}⭐ (≈{rubles}₽)</b>\n\n"
-        f"⚠️ Оплата полностью безопасна — официальная кнопка Telegram.\n\n"
-        f"👇 Нажимай «Оплатить»:"
-    )
+        await message.answer(text, reply_markup=kb.as_markup(), parse_mode="HTML")
 
-    await message.answer(text, reply_markup=kb.as_markup(), parse_mode="HTML")
+        # Очищаем состояние только после того, как сообщение успешно отправлено
+        await state.clear()
+
+    except Exception as e:
+        logger.error(f"❌ Ошибка при обработке промокода: {e}")
+        await message.answer(
+            "⚠️ Произошла ошибка. Попробуй ввести промокод ещё раз:"
+        )
+        # Состояние НЕ очищаем — пользователь может повторить попытку
 
 # ================= РАССЫЛКА =================
 @dp.message(Command("broadcast"))
